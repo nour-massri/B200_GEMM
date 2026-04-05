@@ -1,28 +1,25 @@
-NVCC_FLAGS = -std=c++17 -O3 -DNDEBUG -w
-NVCC_LDFLAGS = -lcublas -lcuda
-OUT_DIR = out
+NVCC_FLAGS = -std=c++17 -O3 -DNDEBUG -w \
+    --expt-relaxed-constexpr --expt-extended-lambda --use_fast_math 
 
-CUDA_OUTPUT_FILE = -o $(OUT_DIR)/$@
-NCU_PATH := $(shell which ncu)
-NCU_COMMAND = sudo $(NCU_PATH) --set full --import-source yes
+LD_FLAGS = -lcublas -lcuda
 
-NVCC_FLAGS += --expt-relaxed-constexpr --expt-extended-lambda --use_fast_math -Xcompiler=-fPIE -Xcompiler=-Wno-psabi -Xcompiler=-fno-strict-aliasing
-NVCC_FLAGS += -arch=sm_90a
+# Original H100 build for local H100 GPU 
+matmul:
+	nvcc $(NVCC_FLAGS) -arch=sm_90a $(LD_FLAGS) matmul_h100.cu -o out/matmul
 
-NVCC_BASE = nvcc $(NVCC_FLAGS) $(NVCC_LDFLAGS) -lineinfo
+h100: matmul_h100.cu
+	.venv/bin/python3 main.py matmul_h100.cu \
+		--gpu H100 \
+		--image nvidia/cuda:12.4.1-devel-ubuntu22.04 \
+		--yes \
+		-- $(NVCC_FLAGS) -arch=sm_90a $(LD_FLAGS)
 
-sum: sum.cu 
-	$(NVCC_BASE) $^ $(CUDA_OUTPUT_FILE)
+# B200 build + run via Modal
+b200: matmul_b200.cu
+	.venv/bin/python3 main.py matmul_b200.cu \
+	    --gpu B200 \
+	    --image nvidia/cuda:12.8.0-devel-ubuntu22.04 \
+	    --yes \
+	    -- $(NVCC_FLAGS) -arch=sm_100a $(LD_FLAGS)
 
-sumprofile: sum
-	$(NCU_COMMAND) -o $@ -f $(OUT_DIR)/$^
-
-matmul: matmul.cu 
-	mkdir -p $(OUT_DIR)
-	$(NVCC_BASE) $^ $(CUDA_OUTPUT_FILE)
-
-matmulprofile: matmul
-	$(NCU_COMMAND) -o $@ -f $(OUT_DIR)/$^
-
-clean:
-	rm $(OUT_DIR)/*
+.PHONY: matmul h100 b200

@@ -87,15 +87,13 @@ __launch_bounds__(NUM_THREADS) void __cluster_dims__(CLUSTER_M *CLUSTER_N, 1, 1)
   int *space = s.space;
 
   // Cluster rank
-  uint32_t cluster_id;
-  asm volatile("mov.u32 %0, %clusterid.x;\n" : "=r"(cluster_id));
+  uint32_t cluster_id = get_cluster_id();
 
   // Load schedule for this cluster
   if (tid < SPACE_LEN)
     space[tid] = dspace[cluster_id * SPACE_LEN + tid];
 
-  int cta_rank;
-  asm volatile("mov.u32 %0, %cluster_ctarank;\n" : "=r"(cta_rank));
+  int cta_rank = get_cluster_ctarank();
 
   const int num_blocks_k = K / BK;
 
@@ -119,15 +117,14 @@ __launch_bounds__(NUM_THREADS) void __cluster_dims__(CLUSTER_M *CLUSTER_N, 1, 1)
     }
     // mainloop done: 1 arrival from tcgen05.commit_mcast
     init_barrier(&s.mainloop_mbar, 1, 0);
-    asm volatile("fence.mbarrier_init.release.cluster;");
+    fence_mbarrier_init_cluster();
   } else if (warp_id == 1) {
     // Allocate tmem (all 32 threads in warp must participate)
     tcgen05_alloc<CTA_GROUP>(tmem_smem_addr, BN);
   }
 
   // Cluster barrier to ensure init visible to all CTAs
-  asm volatile("barrier.cluster.arrive.release.aligned;");
-  asm volatile("barrier.cluster.wait.acquire.aligned;");
+  cluster_sync();
 
   const int taddr = s.tmem_addr; // tmem base (typically 0)
 
@@ -162,11 +159,7 @@ __launch_bounds__(NUM_THREADS) void __cluster_dims__(CLUSTER_M *CLUSTER_N, 1, 1)
         int mbar_cta0 = (tma_mbar_addr + stage * 8) & 0xFEFFFFFF;
 
         // Arrive + set expected tx bytes (cluster-visible)
-        asm volatile(
-            "mbarrier.arrive.expect_tx.release.cta.shared::cluster.b64 _, "
-            "[%0], %1;" ::"r"(mbar_cta0),
-            "r"(A_bytes + B_bytes)
-            : "memory");
+        mbarrier_arrive_expect_tx_cluster(mbar_cta0, A_bytes + B_bytes);
 
         int off_k = iter_k * BK;
         int a_smem = static_cast<int>(
@@ -175,26 +168,14 @@ __launch_bounds__(NUM_THREADS) void __cluster_dims__(CLUSTER_M *CLUSTER_N, 1, 1)
             __cvta_generic_to_shared(&sB[stage * BN_PER_CTA * BK]));
 
         // Load A — each CTA loads its OWN BM rows, targeting CTA0's mbar
-        asm volatile(
-            "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::"
-            "complete_tx::bytes.cta_group::%5"
-            " [%0], [%1, {%3, %4, %6}], [%2];"
-            :
-            : "r"(a_smem), "l"((uint64_t)&tensorMapA), "r"(mbar_cta0),
-              "n"(0), "r"(num_block_m * MMA_M + cta_rank * BM), "n"(CTA_GROUP),
-              "r"(off_k / 64)
-            : "memory");
+        tma_load_3d_cta_group<CTA_GROUP>(
+            a_smem, &tensorMapA, mbar_cta0,
+            num_block_m * MMA_M + cta_rank * BM, off_k / 64);
 
         // Load B — each CTA loads its own HALF of B, targeting CTA0's mbar
-        asm volatile(
-            "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::"
-            "complete_tx::bytes.cta_group::%5"
-            " [%0], [%1, {%3, %4, %6}], [%2];"
-            :
-            : "r"(b_smem), "l"((uint64_t)&tensorMapB), "r"(mbar_cta0),
-              "n"(0), "r"(num_block_n * BN + cta_rank * BN_PER_CTA),
-              "n"(CTA_GROUP), "r"(off_k / 64)
-            : "memory");
+        tma_load_3d_cta_group<CTA_GROUP>(
+            b_smem, &tensorMapB, mbar_cta0,
+            num_block_n * BN + cta_rank * BN_PER_CTA, off_k / 64);
       }
     }
 
@@ -265,12 +246,7 @@ __launch_bounds__(NUM_THREADS) void __cluster_dims__(CLUSTER_M *CLUSTER_N, 1, 1)
       float tmp[8];
       int t_addr = taddr + (dp_row << 16) + (n * 8);
 
-      asm volatile(
-          "tcgen05.ld.sync.aligned.32x32b.x8.b32 "
-          "{%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
-          : "=f"(tmp[0]), "=f"(tmp[1]), "=f"(tmp[2]), "=f"(tmp[3]),
-            "=f"(tmp[4]), "=f"(tmp[5]), "=f"(tmp[6]), "=f"(tmp[7])
-          : "r"(t_addr));
+      tcgen05_ld_32x32b_x8(t_addr, tmp);
       tcgen05_wait_ld();
 
       // Convert f32 → bf16
@@ -295,8 +271,8 @@ __launch_bounds__(NUM_THREADS) void __cluster_dims__(CLUSTER_M *CLUSTER_N, 1, 1)
       int global_row = num_block_m * MMA_M + cta_rank * BM;
       int global_col = num_block_n * BN;
       store_async(&tensorMapC, sC, global_col, global_row);
-      asm volatile("cp.async.bulk.commit_group;");
-      asm volatile("cp.async.bulk.wait_group 0;");
+      cp_async_bulk_commit_group();
+      cp_async_bulk_wait_group<0>();
     }
 
     __syncthreads(); // ensure store done before next tile
@@ -308,10 +284,9 @@ __launch_bounds__(NUM_THREADS) void __cluster_dims__(CLUSTER_M *CLUSTER_N, 1, 1)
         init_barrier(&s.mma_mbar[i], 1, 0);
       }
       init_barrier(&s.mainloop_mbar, 1, 0);
-      asm volatile("fence.mbarrier_init.release.cluster;");
+      fence_mbarrier_init_cluster();
     }
-    asm volatile("barrier.cluster.arrive.release.aligned;");
-    asm volatile("barrier.cluster.wait.acquire.aligned;");
+    cluster_sync();
   }
 
   // Deallocate tmem

@@ -11,6 +11,121 @@
 #include <cuda_bf16.h>
 
 // ---------------------------------------------------------------------------
+// Cluster topology queries
+// ---------------------------------------------------------------------------
+
+// Returns the cluster ID of the current CTA within the grid.
+__device__ static __forceinline__ uint32_t get_cluster_id() {
+  uint32_t id;
+  asm volatile("mov.u32 %0, %clusterid.x;\n" : "=r"(id));
+  return id;
+}
+
+// Returns the CTA rank within the current cluster (0..cluster_size-1).
+__device__ static __forceinline__ uint32_t get_cluster_ctarank() {
+  uint32_t rank;
+  asm volatile("mov.u32 %0, %cluster_ctarank;\n" : "=r"(rank));
+  return rank;
+}
+
+// ---------------------------------------------------------------------------
+// Cluster-level barriers
+// ---------------------------------------------------------------------------
+
+// Ensures all mbarrier inits from this CTA are visible across the cluster.
+__device__ static __forceinline__ void fence_mbarrier_init_cluster() {
+  asm volatile("fence.mbarrier_init.release.cluster;");
+}
+
+// Cluster barrier: signal arrival (release semantics).
+__device__ static __forceinline__ void cluster_arrive() {
+  asm volatile("barrier.cluster.arrive.release.aligned;");
+}
+
+// Cluster barrier: wait for all CTAs in the cluster to arrive (acquire semantics).
+__device__ static __forceinline__ void cluster_wait() {
+  asm volatile("barrier.cluster.wait.acquire.aligned;");
+}
+
+// Cluster barrier: arrive + wait (full sync across cluster).
+__device__ static __forceinline__ void cluster_sync() {
+  cluster_arrive();
+  cluster_wait();
+}
+
+// ---------------------------------------------------------------------------
+// Mbarrier arrive with expected TX bytes (cluster-visible, raw smem address)
+// ---------------------------------------------------------------------------
+
+// Arrive on a cluster-visible mbarrier and set expected transaction bytes.
+// mbar_addr: shared memory address of the mbarrier (cluster-visible int addr)
+// bytes: expected number of bytes to be delivered by async operations.
+__device__ static __forceinline__ void
+mbarrier_arrive_expect_tx_cluster(int mbar_addr, int bytes) {
+  asm volatile(
+      "mbarrier.arrive.expect_tx.release.cta.shared::cluster.b64 _, "
+      "[%0], %1;" ::"r"(mbar_addr),
+      "r"(bytes)
+      : "memory");
+}
+
+// ---------------------------------------------------------------------------
+// TMA 3D async load with cta_group (raw smem addresses)
+// ---------------------------------------------------------------------------
+
+// TMA bulk tensor 3D load with cta_group cooperation, using raw int addresses.
+// dst_smem:   shared memory destination address (int)
+// tensor_map: pointer to the CUtensorMap descriptor
+// mbar_addr:  cluster-visible mbarrier address (int) for completion tracking
+// dim1, dim2: tile coordinates (dim0 is always 0 for 3D TMA tiling)
+template <int CTA_GROUP>
+__device__ static __forceinline__ void
+tma_load_3d_cta_group(int dst_smem, const CUtensorMap *tensor_map,
+                      int mbar_addr, int dim1, int dim2) {
+  asm volatile(
+      "cp.async.bulk.tensor.3d.shared::cluster.global.tile.mbarrier::"
+      "complete_tx::bytes.cta_group::%4"
+      " [%0], [%1, {%3, %5, %6}], [%2];"
+      :
+      : "r"(dst_smem), "l"((uint64_t)tensor_map), "r"(mbar_addr),
+        "n"(0), "n"(CTA_GROUP), "r"(dim1), "r"(dim2)
+      : "memory");
+}
+
+// ---------------------------------------------------------------------------
+// TCGEN05 TMEM load
+// ---------------------------------------------------------------------------
+
+// Load 8 x 32-bit values from tmem (32x32b tile, x8 elements).
+// tmem_addr: tmem address encoding (dp_row << 16 | col_offset)
+// out[8]:    destination array for 8 float values
+__device__ static __forceinline__ void tcgen05_ld_32x32b_x8(int tmem_addr,
+                                                             float out[8]) {
+  asm volatile(
+      "tcgen05.ld.sync.aligned.32x32b.x8.b32 "
+      "{%0,%1,%2,%3,%4,%5,%6,%7}, [%8];"
+      : "=f"(out[0]), "=f"(out[1]), "=f"(out[2]), "=f"(out[3]),
+        "=f"(out[4]), "=f"(out[5]), "=f"(out[6]), "=f"(out[7])
+      : "r"(tmem_addr));
+}
+
+// ---------------------------------------------------------------------------
+// Async bulk copy commit/wait
+// ---------------------------------------------------------------------------
+
+// Commit all pending async bulk copy operations in the current group.
+__device__ static __forceinline__ void cp_async_bulk_commit_group() {
+  asm volatile("cp.async.bulk.commit_group;");
+}
+
+// Wait until all async bulk copy groups have completed.
+// N: number of groups allowed to remain in-flight (0 = wait for all).
+template <int N = 0>
+__device__ static __forceinline__ void cp_async_bulk_wait_group() {
+  asm volatile("cp.async.bulk.wait_group %0;" ::"n"(N));
+}
+
+// ---------------------------------------------------------------------------
 // Descriptor helpers
 // ---------------------------------------------------------------------------
 __device__ static inline uint64_t desc_encode(uint64_t x) {

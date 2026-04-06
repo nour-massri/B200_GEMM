@@ -38,6 +38,6 @@ b200: matmul_b200.cu
 	    --gpu B200 \
 	    --image nvidia/cuda:13.2.0-devel-ubuntu22.04 \
 	    --yes \
-	    -- $(NVCC_FLAGS) -gencode arch=compute_100a,code=sm_100a -Xptxas -O0 $(LD_FLAGS)
+	    -- $(NVCC_FLAGS) -gencode arch=compute_100a,code=sm_100a $(LD_FLAGS)
 
 .PHONY: setup matmul h100 b200

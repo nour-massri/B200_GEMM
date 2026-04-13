@@ -14,12 +14,8 @@ compile_h100:
 	nvcc $(NVCC_FLAGS) -arch=sm_90a -c matmul_h100.cu -o out/matmul_h100.o
 
 compile_b200:
-	@rm -f out/matmul_b200.ptx
-	@nvcc $(NVCC_FLAGS) -arch=compute_100a --ptx matmul_b200.cu -o out/matmul_b200.ptx 2>&1 \
-		| grep -v '^ptxas' || true
-	@test -f out/matmul_b200.ptx \
-		&& echo "compile_b200: OK (PTX generated, ptxas skipped — needs CUDA 13.2)" \
-		|| { echo "compile_b200: FAILED"; exit 1; }
+	#nvcc $(NVCC_FLAGS) -arch=sm_100a -c matmul_b200.cu -o out/matmul_b200.o
+	nvcc $(NVCC_FLAGS) -arch=compute_100a --ptx matmul_b200.cu -o out/matmul_b200.ptx 
 
 # Original H100 build for local H100 GPU 
 matmul:

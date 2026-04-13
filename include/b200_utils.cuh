@@ -54,6 +54,20 @@ __device__ static __forceinline__ void cluster_sync() {
 }
 
 // ---------------------------------------------------------------------------
+// Generic-to-shared address conversion (returns int for PTX instructions)
+// ---------------------------------------------------------------------------
+template <typename T>
+__device__ static __forceinline__ int cvta_generic_to_shared(T *ptr) {
+  return static_cast<int>(__cvta_generic_to_shared(ptr));
+}
+
+// Map any CTA's shared memory mbarrier address to CTA0's equivalent.
+// Bit 24 cleared (& 0xFEFFFFFF) remaps the address to CTA rank 0.
+__device__ static __forceinline__ int mbar_cta0_addr(uint64_t *bar) {
+  return cvta_generic_to_shared(bar) & 0xFEFFFFFF;
+}
+
+// ---------------------------------------------------------------------------
 // Mbarrier arrive with expected TX bytes (cluster-visible, raw smem address)
 // ---------------------------------------------------------------------------
 
@@ -67,6 +81,11 @@ mbarrier_arrive_expect_tx_cluster(int mbar_addr, int bytes) {
       "[%0], %1;" ::"r"(mbar_addr),
       "r"(bytes)
       : "memory");
+}
+
+__device__ static __forceinline__ void
+mbarrier_arrive_expect_tx_cluster(uint64_t *bar, int bytes) {
+  mbarrier_arrive_expect_tx_cluster(cvta_generic_to_shared(bar), bytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +109,26 @@ tma_load_3d_cta_group(int dst_smem, const CUtensorMap *tensor_map,
       : "r"(dst_smem), "l"((uint64_t)tensor_map), "r"(mbar_addr),
         "n"(0), "n"(CTA_GROUP), "r"(dim1), "r"(dim2)
       : "memory");
+}
+
+// Pointer overload: converts smem dst pointer, mbar stays as int (e.g. from mbar_cta0_addr)
+template <int CTA_GROUP>
+__device__ static __forceinline__ void
+tma_load_3d_cta_group(bf16 *dst_smem, const CUtensorMap *tensor_map,
+                      int mbar_addr, int dim1, int dim2) {
+  tma_load_3d_cta_group<CTA_GROUP>(
+      cvta_generic_to_shared(dst_smem), tensor_map,
+      mbar_addr, dim1, dim2);
+}
+
+// Pointer overload: converts both smem dst and mbar pointers to int addresses
+template <int CTA_GROUP>
+__device__ static __forceinline__ void
+tma_load_3d_cta_group(bf16 *dst_smem, const CUtensorMap *tensor_map,
+                      uint64_t *mbar, int dim1, int dim2) {
+  tma_load_3d_cta_group<CTA_GROUP>(
+      cvta_generic_to_shared(dst_smem), tensor_map,
+      cvta_generic_to_shared(mbar), dim1, dim2);
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +224,11 @@ __device__ __forceinline__ void tcgen05_alloc(int smem_addr, int size) {
 }
 
 template <int CTA_GROUP = 1>
+__device__ __forceinline__ void tcgen05_alloc(int *smem_ptr, int size) {
+  tcgen05_alloc<CTA_GROUP>(cvta_generic_to_shared(smem_ptr), size);
+}
+
+template <int CTA_GROUP = 1>
 __device__ __forceinline__ void tcgen05_dealloc(int taddr, int size) {
   asm volatile(
       "tcgen05.dealloc.cta_group::%2.sync.aligned.b32 %0, %1;" ::"r"(taddr),
@@ -238,6 +282,11 @@ __device__ __forceinline__ void tcgen05_commit(int mbar_addr) {
 }
 
 template <int CTA_GROUP = 1>
+__device__ __forceinline__ void tcgen05_commit(uint64_t *bar) {
+  tcgen05_commit<CTA_GROUP>(cvta_generic_to_shared(bar));
+}
+
+template <int CTA_GROUP = 1>
 __device__ __forceinline__ void tcgen05_commit_mcast(int mbar_addr,
                                                      int16_t cta_mask) {
   asm volatile(
@@ -245,6 +294,12 @@ __device__ __forceinline__ void tcgen05_commit_mcast(int mbar_addr,
       "multicast::cluster.b64 [%0], %1;" ::"r"(mbar_addr),
       "h"(cta_mask), "n"(CTA_GROUP)
       : "memory");
+}
+
+template <int CTA_GROUP = 1>
+__device__ __forceinline__ void tcgen05_commit_mcast(uint64_t *bar,
+                                                     int16_t cta_mask) {
+  tcgen05_commit_mcast<CTA_GROUP>(cvta_generic_to_shared(bar), cta_mask);
 }
 
 // ---------------------------------------------------------------------------

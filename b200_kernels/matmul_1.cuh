@@ -15,7 +15,7 @@ struct Kernel1Params {
   static constexpr int BN          = 256;
   static constexpr int BK          = 64;
   static constexpr int NUM_THREADS = 128;
-  static constexpr int NUM_STAGES  = 3;
+  static constexpr int NUM_STAGES  = 5;
   static constexpr int NUM_SM      = 148;
   static constexpr int CLUSTER_M   = 2;
   static constexpr int CLUSTER_N   = 1;
@@ -111,18 +111,30 @@ struct Schedule<2, NUM_SM, BM, BN, TM, TN> {
   }
 };
 
-// Shared memory layout for the B200 kernel
-// With cta_group::2, each CTA loads FULL A but only HALF of B
+// Shared memory layout for the B200 kernel.
+// With cta_group::2, each CTA loads FULL A but only HALF of B.
+// C (epilogue scratch) aliases the A+B region via union: C is only live
+// between mainloop_mbar completion and the next cluster_sync, during which
+// A/B are not accessed. This frees up ~64 KB so NUM_STAGES can be larger.
 template <typename Cfg>
 struct SMem {
-  alignas(128) bf16 A[Cfg::BM * Cfg::BK * Cfg::NUM_STAGES];
-  alignas(128) bf16 B[Cfg::BN_PER_CTA * Cfg::BK * Cfg::NUM_STAGES];
-  alignas(128) bf16 C[Cfg::BM * Cfg::BN]; // epilogue: TMEM -> sC -> TMA store
+  union {
+    struct {
+      alignas(128) bf16 A[Cfg::BM * Cfg::BK * Cfg::NUM_STAGES];
+      alignas(128) bf16 B[Cfg::BN_PER_CTA * Cfg::BK * Cfg::NUM_STAGES];
+    };
+    alignas(128) bf16 C[Cfg::BM * Cfg::BN]; // epilogue: TMEM -> sC -> TMA store
+  };
   alignas(8) uint64_t tma_mbar[Cfg::NUM_STAGES]; // TMA completion (data loaded)
   alignas(8) uint64_t mma_mbar[Cfg::NUM_STAGES]; // MMA completion (buffer recyclable)
   alignas(8) uint64_t mainloop_mbar;        // mainloop done signal
   int tmem_addr;                             // tmem base address from alloc
   int space[SPACE_LEN];
+
+  static_assert(
+      (Cfg::BM * Cfg::BK + Cfg::BN_PER_CTA * Cfg::BK) * Cfg::NUM_STAGES
+          >= Cfg::BM * Cfg::BN,
+      "C must fit within the A+B union region");
 };
 
 // ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ cuBLAS: ~1570 TFLOPS
 ## Lineage
 
 - Started from pranjalssh's H100 fast.cu walkthrough — persistent-kernel + Hilbert-curve scheduling, warp specialization, TMA / mbarrier idioms: <https://cudaforfun.substack.com/p/outperforming-cublas-on-h100-a-worklog>
-- Architectural cues for Blackwell (cta_group::2, TMEM accumulators, async commit chains) from Modular's B200 matmul series: <https://www.modular.com/blog/matrix-multiplication-on-blackwell-part-1-introduction>
+- Architectural cues for Blackwell (cta_group::2, TMEM accumulators, async commit chains) from Modular's B200 matmul series: <https://www.modular.com/blog/matrix-multiplication-on-nvidias-blackwell-part-1-introduction>
 
 ## What's actually here
 

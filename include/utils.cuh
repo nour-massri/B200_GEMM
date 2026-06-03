@@ -1,14 +1,14 @@
 #pragma once
-#include <cuda_runtime.h>
-#include <cuda_bf16.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <cmath>
+#include <cuda_bf16.h>
+#include <cuda_runtime.h>
 #include <iostream>
 #include <random>
+#include <stdio.h>
+#include <stdlib.h>
 
 typedef __nv_bfloat16 bf16;
-#define CEIL_DIV(M, N) (((M) + (N)-1) / (N))
+#define CEIL_DIV(M, N) (((M) + (N) - 1) / (N))
 
 inline void cudaCheck(cudaError_t error, const char *file, int line) {
   if (error != cudaSuccess) {

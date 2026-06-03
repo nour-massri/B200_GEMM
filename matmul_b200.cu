@@ -8,6 +8,7 @@
 #include "include/utils.cuh"
 
 #include "b200_kernels/matmul_1.cuh"
+#include "b200_kernels/matmul_2.cuh"
 
 cublasHandle_t cublas_handle;
 void runCublasGemmBF16(int M, int N, int K, bf16 *A, bf16 *B, bf16 *C) {
@@ -15,8 +16,8 @@ void runCublasGemmBF16(int M, int N, int K, bf16 *A, bf16 *B, bf16 *C) {
   // Our kernel computes C_row = A_row * B_row^T
   // cuBLAS col-major: C = B^T * A → in row-major: C_row[i][j] = A[i]·B[j]
   cublasStatus_t status =
-      cublasGemmEx(cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N, M, N, K, &alpha, B,
-                   CUDA_R_16BF, N, A, CUDA_R_16BF, K, &beta, C, CUDA_R_16BF, N,
+      cublasGemmEx(cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N, N, M, K, &alpha, B,
+                   CUDA_R_16BF, K, A, CUDA_R_16BF, K, &beta, C, CUDA_R_16BF, N,
                    CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT);
 
   if (status != CUBLAS_STATUS_SUCCESS) {
@@ -34,6 +35,8 @@ void run_kernel(int kernel_num, int M, int N, int K, bf16 *A, bf16 *B, bf16 *C,
   case 1:
     runKernel1(M, N, K, A, B, C, nullptr);
     break;
+  case 2:
+    runKernel2(M, N, K, A, B, C, nullptr);
   }
 }
 __global__ void warmupKernel() {
@@ -84,8 +87,7 @@ int main() {
 
   int repeat_times = 8;
   bool run_verif = true;
-  for (int kernel_num : {0, 1}) {
-    // for (int kernel_num : {0, 1}) {
+  for (int kernel_num : {0, 1, 2}) {
     // Give the GPU some rest to avoid thermal throttling
     sleep(5);
     std::cout << "KERNEL " << kernel_num << std::endl;

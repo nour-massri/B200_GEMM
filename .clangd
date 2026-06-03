@@ -1,0 +1,54 @@
+# clangd config for CUDA development.
+# Build runs on Modal via Makefile; this file only configures the LSP parser.
+# We parse .cu/.cuh as plain C++ with CUDA keywords macro-defined, since
+# clangd's architecture forces -x c++ on .cu files regardless of clang version.
+
+CompileFlags:
+  Add:
+    # Project includes
+    - -I/home/nour/Dev/b200_gemm
+    - -I/home/nour/Dev/b200_gemm/include
+    # CUDA toolkit + libcu++ (CCCL drop-ins moved here in CUDA 13)
+    - -I/usr/local/cuda/include
+    - -I/usr/local/cuda/include/cccl
+    - --cuda-path=/usr/local/cuda
+    - -std=c++17
+
+    # CUDA-mode-only keywords expanded to nothing
+    - "-D__launch_bounds__(...)="
+    - "-D__cluster_dims__(...)="
+
+    # Expose CUDA built-ins (__syncthreads, etc.) in plain-C++ mode
+    - -D__CUDACC__=1
+    - -D__CUDACC_VER_MAJOR__=13
+    - -D__CUDACC_VER_MINOR__=2
+    - -D__CUDA_ARCH__=1000
+    - -D__CUDA_ARCH_LIST__=1000
+
+    # CCCL aborts on host compiler != toolkit version; we're parsing
+    - -DCCCL_DISABLE_CTK_COMPATIBILITY_CHECK
+
+    # IDE sentinels — CCCL/CUTLASS-style headers branch on these
+    - -D__INTELLISENSE__
+    - -D__CLANGD__
+
+    - -ferror-limit=0
+    - -Wno-unknown-cuda-version
+    - -Wno-unknown-attributes
+    - -Wno-unknown-warning-option
+    - -Wno-pragma-once-outside-header
+    - -Wno-ignored-attributes
+    - -Wno-extra-tokens
+    - -Wno-c++17-extensions
+
+Diagnostics:
+  Suppress:
+    - drv_unknown_argument
+    - variadic_device_fn
+    - attributes_not_allowed
+
+Hover:
+  ShowAKA: No
+
+InlayHints:
+  Enabled: No

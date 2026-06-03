@@ -1,1 +1,26 @@
+# Build artifacts
 out/
+build/
+*.o
+*.ptx
+*.cubin
+*.fatbin
+
+# Logs
+iter_logs/
+*.log
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# clangd
+.cache/
+compile_commands.json
+
+# Editor
+*.swp
+*.swo
+.vscode/
+.idea/
